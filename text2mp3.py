@@ -2,9 +2,9 @@ import sys
 import os
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout,
-    QWidget, QLabel, QLineEdit, QGroupBox
+    QWidget, QLabel, QLineEdit, QGroupBox, QSlider, QDialog, QProgressBar
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import speech_recognition as sr
 from gtts import gTTS
 
@@ -18,7 +18,7 @@ class VoiceApp(QMainWindow):
     def initUI(self):
         # Thiết lập giao diện chính
         self.setWindowTitle("Chuyển Giọng Nói và Văn Bản")
-        self.setGeometry(100, 100, 600, 400)
+        self.setGeometry(150, 150, 800, 600)
 
         # Tạo các thành phần giao diện
         self.label_instruction = QLabel(
@@ -37,12 +37,25 @@ class VoiceApp(QMainWindow):
 
         # Nhãn trạng thái
         self.label_status = QLabel("")
+
         self.label_status.setAlignment(Qt.AlignCenter)
         self.label_status.setStyleSheet("font-size: 12px; color: blue;")
 
+        # Thêm thanh trượt điều chỉnh tốc độ (chỉ có 2 lựa chọn: Chậm và Bình thường)
+        self.label_speed = QLabel("Tốc độ đọc:")
+        self.slider_speed = QSlider(Qt.Horizontal)
+        self.slider_speed.setRange(0, 1)  # Chỉ có 2 lựa chọn: Chậm (0) và Bình thường (1)
+        self.slider_speed.setValue(1)  # Mặc định là đọc với tốc độ bình thường
+
+        # Nhãn hiển thị tốc độ khi kéo thanh trượt
+        self.label_current_speed = QLabel("Tốc độ: Bình thường")
+        
         # Kết nối sự kiện
         self.btn_toggle_listen.clicked.connect(self.toggle_listen)
         self.btn_text_to_speech.clicked.connect(self.text_to_speech)
+
+        # Kết nối sự kiện thay đổi giá trị thanh trượt
+        self.slider_speed.valueChanged.connect(self.update_speed_label)
 
         # Sắp xếp giao diện
         layout_main = QVBoxLayout()
@@ -61,6 +74,15 @@ class VoiceApp(QMainWindow):
         layout_filename.addWidget(self.input_filename)
         group_filename.setLayout(layout_filename)
         layout_main.addWidget(group_filename)
+
+        # Thêm phần điều chỉnh tốc độ đọc
+        layout_speed = QHBoxLayout()
+        layout_speed.addWidget(self.label_speed)
+        layout_speed.addWidget(self.slider_speed)
+        layout_main.addLayout(layout_speed)
+
+        # Thêm label hiển thị tốc độ
+        layout_main.addWidget(self.label_current_speed)
 
         layout_buttons = QHBoxLayout()
         layout_buttons.addWidget(self.btn_toggle_listen)
@@ -139,13 +161,68 @@ class VoiceApp(QMainWindow):
         if not filename.endswith(".mp3"):
             filename += ".mp3"
 
+        # Hiển thị cửa sổ chờ
+        self.loading_window = LoadingWindow()
+        self.loading_window.show()
+
+        # Chạy quá trình lưu file MP3 trong một thread
+        self.worker = SaveMP3Worker(text, filename, self.slider_speed.value(), self.loading_window)
+        self.worker.finished.connect(self.on_save_finished)
+        self.worker.start()
+
+    def on_save_finished(self):
+        # Ẩn cửa sổ chờ khi hoàn tất
+        self.loading_window.close()
+        self.label_status.setText("Đã lưu file giọng nói thành công!")
+
+    def update_speed_label(self):
+        """Cập nhật label hiển thị tốc độ khi kéo thanh trượt."""
+        speed_value = self.slider_speed.value()
+        if speed_value == 0:
+            self.label_current_speed.setText("Tốc độ: Chậm")
+        else:
+            self.label_current_speed.setText("Tốc độ: Bình thường")
+
+
+class LoadingWindow(QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Đang lưu file...")
+        self.setGeometry(500, 300, 300, 100)
+        self.setWindowModality(Qt.ApplicationModal)
+
+        layout = QVBoxLayout()
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setRange(0, 0)  # Không có giá trị cụ thể, chỉ là trạng thái đang chờ
+        layout.addWidget(self.progress_bar)
+        self.setLayout(layout)
+
+
+class SaveMP3Worker(QThread):
+    finished = pyqtSignal()
+
+    def __init__(self, text, filename, speed, loading_window):
+        super().__init__()
+        self.text = text
+        self.filename = filename
+        self.speed = speed
+        self.loading_window = loading_window
+
+    def run(self):
         try:
-            tts = gTTS(text=text, lang="vi", slow=False)
-            tts.save(filename)
-            self.label_status.setText(f"Đã lưu file giọng nói: {filename}")
-            os.system(f"start {filename}" if os.name == "nt" else f"xdg-open {filename}")
+            # Xác định tốc độ đọc
+            slow = True if self.speed == 0 else False
+
+            # Tạo giọng nói và lưu file MP3
+            tts = gTTS(text=self.text, lang="vi", slow=slow)
+            tts.save(self.filename)
+
+            # Sau khi hoàn tất lưu file, phát tín hiệu
+            self.finished.emit()
         except Exception as e:
-            self.label_status.setText(f"Lỗi khi lưu file mp3: {e}")
+            self.loading_window.close()
+            print(f"Lỗi khi lưu file mp3: {e}")
+            self.finished.emit()
 
 
 if __name__ == "__main__":

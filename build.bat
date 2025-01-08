@@ -1,0 +1,1 @@
+"C:\Users\Admin\appdata\roaming\python\python312\Scripts\pyinstaller.exe" --onefile --icon="icon\icon.png" --name="text2mp3_ver2" text2mp3.py
